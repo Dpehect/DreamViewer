@@ -1,59 +1,22 @@
-# DreamWeaver AI
+DreamViewer is a full-stack React application that converts user-described dreams into high-quality artistic images accompanied by deep psychological analysis.
+Key Features:
 
-Premium dream visualization powered by **Grok Imagine**, with deep multi-section analysis.
+Users input their dream description
+Generates a single, contextually relevant artistic image using Grok Imagine API
+Provides a rich multi-section psychological analysis (Emotional Atmosphere, Key Symbols, Psychological Interpretation, Hidden Messages, Personal Advice)
+Supports both English and Turkish languages
 
-## Flow
+Technical Stack:
 
-1. Write your dream  
-2. Click **Rüyamı Görselleştir** / **Visualize my dream**  
-3. **One** high-quality artistic image (Grok Imagine)  
-4. Rich analysis below the image  
+Frontend: React 18 + TypeScript + Vite
+Styling & Animation: Tailwind CSS v4 + Framer Motion
+AI Integration: Grok Imagine API (with Pollinations Flux as fallback)
+State Management: Custom hooks with optimized performance
+Architecture: Clean modular structure with proper error handling, loading states, and abortable API calls
 
-### Analysis
+Links:
 
-- Emotional Atmosphere  
-- Key Symbols & Meanings  
-- Psychological Interpretation  
-- Hidden Messages  
-- Personal Advice & Reflection Questions  
+Live Demo: https://dream-viewer-five.vercel.app/
+GitHub Repository: https://github.com/Dpehect/DreamViewer
 
-## Stack
-
-- React + TypeScript (Vite)  
-- Tailwind CSS v4  
-- Framer Motion  
-- **Grok Imagine** via `POST /api/imagine` (`XAI_API_KEY`)  
-- Flux fallback (Pollinations) when no API key  
-
-## Setup
-
-```bash
-npm install
-cp .env.example .env
-# Add: XAI_API_KEY=xai-...
-npm run dev
-```
-
-Open http://localhost:5173
-
-## Scripts
-
-```bash
-npm run dev
-npm run build
-npm run preview
-```
-
-## Project layout
-
-```
-src/
-  App.tsx
-  components/
-    AnalysisPanel.tsx
-    LanguageSwitch.tsx
-  lib/
-    analyze.ts    # dream → prompt + 5-section report
-    imagine.ts    # Grok Imagine + Flux fallback
-    i18n.ts       # EN / TR
-```
+This project focuses on combining AI image generation with meaningful psychological insight through a clean and modern user interface.
