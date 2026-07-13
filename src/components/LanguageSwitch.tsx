@@ -1,13 +1,13 @@
+import { memo } from 'react'
 import { motion } from 'framer-motion'
-import type { Lang } from '../lib/i18n'
+import type { Lang } from '../types/dream'
 
-export function LanguageSwitch({
-  lang,
-  onChange,
-}: {
+type Props = {
   lang: Lang
   onChange: (l: Lang) => void
-}) {
+}
+
+function LanguageSwitchInner({ lang, onChange }: Props) {
   return (
     <div className="lang-switch" role="group" aria-label="Language">
       {(['en', 'tr'] as const).map((code) => {
@@ -34,3 +34,5 @@ export function LanguageSwitch({
     </div>
   )
 }
+
+export const LanguageSwitch = memo(LanguageSwitchInner)

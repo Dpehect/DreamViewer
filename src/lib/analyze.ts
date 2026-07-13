@@ -1,33 +1,71 @@
 /**
- * Dream text → detailed Grok Imagine prompt + 5-section analysis (EN/TR)
+ * Dream analysis engine
+ * Parses text (TR/EN) → Scene Bible → image prompt + multi-section report
  */
 
-import type { Lang } from './i18n'
+import type { DreamReport, Lang, SymbolReading } from '../types/dream'
 
-export type SymbolReading = { name: string; meaning: string }
+/* ── Utils ───────────────────────────────────────────────── */
 
-export type DreamReport = {
-  seed: number
-  title: string
-  mood: string
-  tags: string[]
-  imagePrompt: string
-  emotionalAtmosphere: string
-  symbols: SymbolReading[]
-  psychology: string
-  hiddenMessages: string
-  advice: string
-  reflectionQuestions: string[]
+function hash(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function pick<T>(arr: readonly T[], seed: number): T {
+  return arr[Math.abs(seed) % arr.length]
+}
+
+function L(lang: Lang, en: string, tr: string): string {
+  return lang === 'tr' ? tr : en
+}
+
+function has(lower: string, keys: readonly string[]): boolean {
+  return keys.some((k) => lower.includes(k))
+}
+
+function scoreKeys(lower: string, keys: readonly string[], weight = 1): number {
+  let s = 0
+  for (const k of keys) if (lower.includes(k)) s += weight
+  return s
 }
 
 type Scored<T> = T & { score: number }
+
+function rank<T extends { keys: readonly string[]; w?: number }>(
+  lower: string,
+  list: readonly T[],
+): Scored<T>[] {
+  return list
+    .map((item) => ({ ...item, score: scoreKeys(lower, item.keys, item.w ?? 1) }))
+    .filter((i) => i.score > 0)
+    .sort((a, b) => b.score - a.score)
+}
+
+function extractPhrases(text: string): string[] {
+  const stop = new Set([
+    'bir', 've', 'ile', 'the', 'and', 'was', 'were', 'gibi', 'sonra', 'çok', 'ama',
+    'that', 'this', 'için', 'ben', 'my', 'then', 'gördüm', 'oldu', 'birden',
+  ])
+  const out: string[] = []
+  for (const w of text.replace(/[.,;:!?…"""'()\-]/g, ' ').split(/\s+/)) {
+    if (w.length < 3 || stop.has(w.toLowerCase())) continue
+    if (!out.some((x) => x.toLowerCase() === w.toLowerCase())) out.push(w)
+    if (out.length >= 14) break
+  }
+  return out
+}
 
 /* ── Lexicons ────────────────────────────────────────────── */
 
 const EMOTIONS = [
   { keys: ['kork', 'fear', 'scared', 'terrif', 'kâbus', 'kabus', 'nightmare', 'panik'], id: 'fear', en: 'vigilant tension', tr: 'uyanık gerilim', w: 4 },
   { keys: ['savaş', 'dövüş', 'kavga', 'fight', 'battle', 'struggle', 'mücadele'], id: 'conflict', en: 'fierce confrontation', tr: 'şiddetli yüzleşme', w: 5 },
-  { keys: ['cesaret', 'güç', 'brave', 'courage', 'power', 'strong', 'zafer', 'victory'], id: 'courage', en: 'courageous force', tr: 'cesur güç', w: 4 },
+  { keys: ['cesaret', 'güç', 'brave', 'courage', 'power', 'strong', 'zafer'], id: 'courage', en: 'courageous force', tr: 'cesur güç', w: 4 },
   { keys: ['üzgün', 'hüzün', 'ağla', 'sad', 'cry', 'melanchol', 'yalnız', 'alone'], id: 'sadness', en: 'melancholy', tr: 'hüzün', w: 3 },
   { keys: ['mutlu', 'neşe', 'happy', 'joy', 'gül'], id: 'joy', en: 'radiant joy', tr: 'neşe', w: 3 },
   { keys: ['aşk', 'sevgi', 'love', 'kalp', 'heart', 'öp', 'sarıl'], id: 'love', en: 'deep tenderness', tr: 'şefkat', w: 3 },
@@ -39,25 +77,26 @@ const EMOTIONS = [
 ] as const
 
 const PLACES = [
-  { keys: ['orman', 'forest', 'ağaç', 'tree'], id: 'forest', en: 'forest', tr: 'orman', scene: 'ancient atmospheric forest, mist between tall trees, mossy ground' },
+  { keys: ['orman', 'forest', 'ağaç', 'tree'], id: 'forest', en: 'forest', tr: 'orman', scene: 'ancient atmospheric forest with mist between tall trees and mossy ground' },
   { keys: ['deniz', 'ocean', 'sea', 'okyanus'], id: 'sea', en: 'sea', tr: 'deniz', scene: 'cinematic seascape with luminous waves and endless horizon' },
   { keys: ['gökyüzü', 'sky', 'bulut', 'cloud'], id: 'sky', en: 'sky', tr: 'gökyüzü', scene: 'infinite sky among sculpted pastel clouds' },
   { keys: ['ev', 'house', 'home', 'oda', 'room'], id: 'house', en: 'home', tr: 'ev', scene: 'liminal childhood house with warm strange interior light' },
-  { keys: ['şehir', 'city', 'cadde'], id: 'city', en: 'city', tr: 'şehir', scene: 'hushed dream-city, empty streets, soft haze' },
+  { keys: ['şehir', 'city', 'cadde'], id: 'city', en: 'city', tr: 'şehir', scene: 'hushed dream-city with empty streets and soft haze' },
   { keys: ['bahçe', 'garden', 'çiçek'], id: 'garden', en: 'garden', tr: 'bahçe', scene: 'secret garden blooming in dusk light' },
-  { keys: ['çöl', 'desert', 'savan', 'savanna', 'ova', 'plain'], id: 'savanna', en: 'plain', tr: 'ova', scene: 'golden-peach open plain under a vast emotional sky' },
+  { keys: ['çöl', 'desert', 'savan', 'ova', 'plain'], id: 'savanna', en: 'plain', tr: 'ova', scene: 'golden-peach open plain under a vast emotional sky' },
   { keys: ['dağ', 'mountain'], id: 'mountain', en: 'mountains', tr: 'dağlar', scene: 'dramatic mountain ridges fading into pastel mist' },
   { keys: ['uzay', 'space', 'yıldız', 'star'], id: 'cosmos', en: 'cosmos', tr: 'kozmos', scene: 'soft cosmic expanse of stars and nebulae' },
+  { keys: ['arena', 'stadyum'], id: 'arena', en: 'arena', tr: 'arena', scene: 'mythic open arena of stone and dust under theatrical light' },
 ] as const
 
 const CREATURES = [
-  { keys: ['aslan', 'lion', 'aslanlar', 'lions'], id: 'lion', en: 'lion', tr: 'aslan', visual: 'majestic lions, powerful realistic anatomy, golden-rose fur in cinematic light, fierce yet noble' },
+  { keys: ['aslan', 'lion', 'aslanlar', 'lions'], id: 'lion', en: 'lion', tr: 'aslan', visual: 'majestic lions with powerful realistic anatomy, golden-rose fur in cinematic light, fierce yet noble' },
   { keys: ['kaplan', 'tiger'], id: 'tiger', en: 'tiger', tr: 'kaplan', visual: 'powerful tiger with painterly stripes and regal eyes' },
   { keys: ['kurt', 'wolf'], id: 'wolf', en: 'wolf', tr: 'kurt', visual: 'wolves with silver-dust fur and intelligent eyes' },
   { keys: ['yılan', 'snake'], id: 'snake', en: 'serpent', tr: 'yılan', visual: 'luminous serpent with iridescent pastel scales' },
   { keys: ['kedi', 'cat'], id: 'cat', en: 'cat', tr: 'kedi', visual: 'silver soft-furred cat with luminous eyes' },
   { keys: ['kuş', 'bird'], id: 'bird', en: 'birds', tr: 'kuşlar', visual: 'birds as soft messengers in the sky' },
-  { keys: ['at', 'horse'], id: 'horse', en: 'horse', tr: 'at', visual: 'pale powerful horses, manes flowing like light' },
+  { keys: ['at', 'horse'], id: 'horse', en: 'horse', tr: 'at', visual: 'pale powerful horses with manes flowing like light' },
   { keys: ['canavar', 'monster', 'beast'], id: 'beast', en: 'beast', tr: 'canavar', visual: 'symbolic powerful beast form, elegant not gory' },
 ] as const
 
@@ -68,7 +107,7 @@ const OBJECTS = [
   { keys: ['su', 'water', 'yağmur', 'rain', 'dalga'], id: 'water', en: 'Water', tr: 'Su', visual: 'water as waves, rain, or reflective pools' },
   { keys: ['ateş', 'fire', 'alev'], id: 'fire', en: 'Fire', tr: 'Ateş', visual: 'painterly fire and ember light' },
   { keys: ['anahtar', 'key'], id: 'key', en: 'Key', tr: 'Anahtar', visual: 'ornate floating key' },
-  { keys: ['ay', 'moon'], id: 'moon', en: 'Moon', tr: 'Ay', visual: 'large emotional moon near horizon' },
+  { keys: ['ay', 'moon'], id: 'moon', en: 'Moon', tr: 'Ay', visual: 'large emotional moon near the horizon' },
   { keys: ['köprü', 'bridge'], id: 'bridge', en: 'Bridge', tr: 'Köprü', visual: 'arched soft bridge as transition' },
 ] as const
 
@@ -83,14 +122,14 @@ const ACTIONS = [
   { keys: ['bul', 'find', 'keşfet'], id: 'find', en: 'discovering a luminous place or object', drama: 0.3 },
 ] as const
 
-const SYMBOL_TEXT: Record<string, { en: string; tr: string; meanEn: string; meanTr: string }> = {
+const SYMBOL_DB: Record<string, { en: string; tr: string; meanEn: string; meanTr: string }> = {
   lion: {
     en: 'Lion',
     tr: 'Aslan',
     meanEn:
-      'Instinctual power, sovereignty, and the raw Self. Fighting lions often means confronting your own strength, pride, anger, or a dominant force in waking life. The lion is both trial and teacher — power you must face without being consumed by it.',
+      'Instinctual power, sovereignty, and the raw Self. Fighting lions often means confronting your own strength, pride, anger, or a dominant force in waking life. The lion is both trial and teacher — power you must face without being consumed.',
     meanTr:
-      'İçgüdüsel güç, egemenlik ve ham Benlik. Aslanlarla savaşmak çoğu zaman kendi gücünüzle, gururla, öfkeyle veya uyanık hayattaki baskın bir kuvvetle yüzleşmek demektir. Aslan hem imtihan hem öğretmendir — yok edilmeden yüzleşmeniz gereken güç.',
+      'İçgüdüsel güç, egemenlik ve ham Benlik. Aslanlarla savaşmak çoğu zaman kendi gücünüzle, gururla, öfkeyle veya uyanık hayattaki baskın bir kuvvetle yüzleşmek demektir. Aslan hem imtihan hem öğretmendir.',
   },
   tiger: {
     en: 'Tiger',
@@ -196,59 +235,37 @@ const SYMBOL_TEXT: Record<string, { en: string; tr: string; meanEn: string; mean
     meanEn: 'Architecture of identity and family psyche — rooms of memory and privacy.',
     meanTr: 'Kimlik ve aile psişesinin mimarisi — bellek ve mahremiyet odaları.',
   },
+  snake: {
+    en: 'Serpent',
+    tr: 'Yılan',
+    meanEn: 'Transformation and shedding of old skin — fear of snakes often tracks fear of change.',
+    meanTr: 'Dönüşüm ve eski deriyi bırakmak — yılan korkusu çoğu zaman değişim korkusuna yapışıktır.',
+  },
 }
 
-/* ── Utils ───────────────────────────────────────────────── */
+/* ── Scene bible ─────────────────────────────────────────── */
 
-function hash(s: string) {
-  let h = 2166136261
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
+type PlaceView = { id: string; en: string; tr: string; scene: string }
+
+type SceneBible = {
+  seed: number
+  variation: number
+  excerpt: string
+  phrases: string[]
+  emotions: Scored<(typeof EMOTIONS)[number]>[]
+  place: PlaceView
+  creatures: Scored<(typeof CREATURES)[number]>[]
+  objects: Scored<(typeof OBJECTS)[number]>[]
+  action?: Scored<(typeof ACTIONS)[number]>
+  drama: number
+  palette: string
 }
 
-function pick<T>(arr: readonly T[], seed: number) {
-  return arr[Math.abs(seed) % arr.length]
-}
-
-function L(lang: Lang, en: string, tr: string) {
-  return lang === 'tr' ? tr : en
-}
-
-function score(lower: string, keys: readonly string[], w = 1) {
-  let s = 0
-  for (const k of keys) if (lower.includes(k)) s += w
-  return s
-}
-
-function rank<T extends { keys: readonly string[]; w?: number }>(lower: string, list: readonly T[]): Scored<T>[] {
-  return list
-    .map((item) => ({ ...item, score: score(lower, item.keys, item.w ?? 1) }))
-    .filter((i) => i.score > 0)
-    .sort((a, b) => b.score - a.score)
-}
-
-function phrases(text: string) {
-  const stop = new Set(['bir', 've', 'the', 'and', 'was', 'ile', 'gibi', 'çok', 'sonra', 'ama', 'that', 'this'])
-  const out: string[] = []
-  for (const w of text.replace(/[.,;:!?…"""'']/g, ' ').split(/\s+/)) {
-    if (w.length < 3 || stop.has(w.toLowerCase())) continue
-    if (!out.some((x) => x.toLowerCase() === w.toLowerCase())) out.push(w)
-    if (out.length >= 12) break
-  }
-  return out
-}
-
-/* ── Main ────────────────────────────────────────────────── */
-
-export function analyzeDream(dreamText: string, lang: Lang, variation = 0): DreamReport {
+function buildBible(dreamText: string, variation: number): SceneBible {
   const raw = dreamText.trim()
   const lower = raw.toLowerCase()
   const seed = (hash(lower) + variation * 7919) >>> 0
   const excerpt = raw.length > 500 ? `${raw.slice(0, 497)}…` : raw
-  const words = phrases(raw)
 
   const emotions = rank(lower, EMOTIONS)
   const places = rank(lower, PLACES)
@@ -261,17 +278,25 @@ export function analyzeDream(dreamText: string, lang: Lang, variation = 0): Drea
   const creature = creatures[0]
 
   let drama = Number(act?.drama ?? 0.25)
-  if (emo && ['conflict', 'fear', 'anger', 'courage', 'urgency'].includes(emo.id)) drama = Math.max(drama, 0.7)
-  if (creatures.some((c) => ['lion', 'tiger', 'beast', 'wolf'].includes(c.id))) drama = Math.max(drama, 0.75)
-  if (score(lower, ['aslan', 'lion', 'savaş', 'fight', 'battle'])) drama = Math.max(drama, 0.85)
+  if (emo && ['conflict', 'fear', 'anger', 'courage', 'urgency'].includes(emo.id)) {
+    drama = Math.max(drama, 0.7)
+  }
+  if (creatures.some((c) => ['lion', 'tiger', 'beast', 'wolf'].includes(c.id))) {
+    drama = Math.max(drama, 0.75)
+  }
+  if (has(lower, ['aslan', 'lion', 'savaş', 'fight', 'battle'])) {
+    drama = Math.max(drama, 0.85)
+  }
 
-  type PlaceView = { id: string; en: string; tr: string; scene: string }
   let place: PlaceView
   if (places[0]) {
     place = { id: places[0].id, en: places[0].en, tr: places[0].tr, scene: places[0].scene }
   } else if (creature && (creature.id === 'lion' || creature.id === 'tiger')) {
     const sav = PLACES.find((p) => p.id === 'savanna')!
     place = { id: sav.id, en: sav.en, tr: sav.tr, scene: sav.scene }
+  } else if (drama >= 0.8) {
+    const ar = PLACES.find((p) => p.id === 'arena')!
+    place = { id: ar.id, en: ar.en, tr: ar.tr, scene: ar.scene }
   } else {
     place = {
       id: 'liminal',
@@ -284,48 +309,89 @@ export function analyzeDream(dreamText: string, lang: Lang, variation = 0): Drea
   const palette =
     drama >= 0.7
       ? 'dusty rose gold (#e8b4a0), deep lavender dusk (#8b7a9e), peach amber (#f0c090), soft plum shadow (#5c4a62), misty ivory (#f4ebe4)'
-      : 'blush pink (#f6c1d4), soft lavender (#c9b8e8), powder blue (#a8d4f0), mint (#b8e8d4), warm peach (#f5c9a8)'
-
-  const title = buildTitle(lang, seed, creature?.id, act?.id, place.id)
-  const mood = emo ? emo[lang === 'tr' ? 'tr' : 'en'] : L(lang, 'layered wonder', 'katmanlı hayret')
-  const tags = [
-    mood,
-    lang === 'tr' ? place.tr : place.en,
-    ...creatures.slice(0, 2).map((c) => (lang === 'tr' ? c.tr : c.en)),
-  ].filter(Boolean)
-
-  const imagePrompt = buildPrompt({
-    excerpt,
-    scene: place.scene,
-    creatures,
-    objects,
-    actionEn: act?.en,
-    palette,
-    drama,
-    words,
-    variation,
-    seed,
-  })
-
-  const symbols = buildSymbols(lang, creatures, objects, act?.id, emo?.id)
+      : 'blush pink (#f6c1d4), soft lavender (#c4b5fd), powder blue (#93c5fd), mint (#6ee7b7), warm peach (#fdba74)'
 
   return {
     seed,
-    title,
-    mood,
-    tags,
-    imagePrompt,
-    emotionalAtmosphere: sectionEmotional(lang, excerpt, emo, place, creature, act, drama),
-    symbols,
-    psychology: sectionPsychology(lang, excerpt, emo, creature, act, place, drama),
-    hiddenMessages: sectionHidden(lang, emo, creature, objects, act, drama),
-    advice: sectionAdvice(lang, emo, creature, act, drama).text,
-    reflectionQuestions: sectionAdvice(lang, emo, creature, act, drama).questions,
+    variation,
+    excerpt,
+    phrases: extractPhrases(raw),
+    emotions,
+    place,
+    creatures,
+    objects,
+    action: act,
+    drama,
+    palette,
   }
 }
 
-function buildTitle(lang: Lang, seed: number, creature?: string, action?: string, place?: string) {
-  if (creature === 'lion' && action === 'fight') return L(lang, 'Trial of the Lions', 'Aslanların İmtihanı')
+/* ── Public API ──────────────────────────────────────────── */
+
+/**
+ * Analyze dream text and produce a full report + image prompt.
+ * Pure function — safe to call on language switch without side effects.
+ */
+export function analyzeDream(
+  dreamText: string,
+  lang: Lang,
+  variation = 0,
+): DreamReport {
+  const bible = buildBible(dreamText, variation)
+  const emo = bible.emotions[0]
+  const act = bible.action
+  const creature = bible.creatures[0]
+
+  const title = buildTitle(lang, bible.seed, creature?.id, act?.id, bible.place.id)
+  const mood = emo
+    ? emo[lang === 'tr' ? 'tr' : 'en']
+    : L(lang, 'layered wonder', 'katmanlı hayret')
+
+  const tags = [
+    mood,
+    lang === 'tr' ? bible.place.tr : bible.place.en,
+    ...bible.creatures.slice(0, 2).map((c) => (lang === 'tr' ? c.tr : c.en)),
+  ].filter(Boolean)
+
+  return {
+    seed: bible.seed,
+    variation,
+    title,
+    mood,
+    tags,
+    imagePrompt: buildImagePrompt(bible),
+    imageNote: L(
+      lang,
+      bible.drama >= 0.65
+        ? 'Cinematic fine art · emotional pastel drama'
+        : 'Poetic fine art · soft pastel light',
+      bible.drama >= 0.65
+        ? 'Sinematik sanat · duygusal pastel drama'
+        : 'Poetik sanat · yumuşak pastel ışık',
+    ),
+    drama: bible.drama,
+    emotionalAtmosphere: sectionEmotional(lang, bible),
+    symbols: buildSymbols(lang, bible),
+    psychology: sectionPsychology(lang, bible),
+    hiddenMessages: sectionHidden(lang, bible),
+    personalAdvice: sectionAdvice(lang, bible).text,
+    reflectionQuestions: sectionAdvice(lang, bible).questions,
+    thematicConnections: sectionThemes(lang, bible),
+  }
+}
+
+/* ── Title & symbols ─────────────────────────────────────── */
+
+function buildTitle(
+  lang: Lang,
+  seed: number,
+  creature?: string,
+  action?: string,
+  place?: string,
+): string {
+  if (creature === 'lion' && action === 'fight') {
+    return L(lang, 'Trial of the Lions', 'Aslanların İmtihanı')
+  }
   if (creature === 'lion') return L(lang, 'The Golden Roar', 'Altın Kükreme')
   if (action === 'fight') return L(lang, 'Night of Confrontation', 'Yüzleşme Gecesi')
   if (action === 'fly') return L(lang, 'Weightless Kingdom', 'Ağırlıksız Krallık')
@@ -338,101 +404,94 @@ function buildTitle(lang: Lang, seed: number, creature?: string, action?: string
   )
 }
 
-function buildSymbols(
-  lang: Lang,
-  creatures: Scored<(typeof CREATURES)[number]>[],
-  objects: Scored<(typeof OBJECTS)[number]>[],
-  actionId?: string,
-  emoId?: string,
-): SymbolReading[] {
+function buildSymbols(lang: Lang, b: SceneBible): SymbolReading[] {
   const ids: string[] = []
-  for (const c of creatures.slice(0, 3)) ids.push(c.id)
-  for (const o of objects.slice(0, 3)) ids.push(o.id)
-  if (actionId === 'fight') ids.push('fight')
-  if (actionId === 'fly') ids.push('flight')
-  if (emoId === 'fear') ids.push('shadow')
+  for (const c of b.creatures.slice(0, 3)) ids.push(c.id)
+  for (const o of b.objects.slice(0, 3)) ids.push(o.id)
+  if (b.action?.id === 'fight') ids.push('fight')
+  if (b.action?.id === 'fly') ids.push('flight')
+  if (b.emotions[0]?.id === 'fear') ids.push('shadow')
+  if (b.place.id === 'forest') ids.push('forest')
+  if (b.place.id === 'house') ids.push('house')
   ids.push('dreamer')
 
   const out: SymbolReading[] = []
   for (const id of ids) {
-    const s = SYMBOL_TEXT[id]
+    const s = SYMBOL_DB[id]
     if (!s) continue
     const name = lang === 'tr' ? s.tr : s.en
     if (out.some((x) => x.name === name)) continue
     out.push({ name, meaning: lang === 'tr' ? s.meanTr : s.meanEn })
   }
+
   if (out.length < 2) {
     out.push({
       name: L(lang, 'Night Image', 'Gece İmgesi'),
       meaning: L(
         lang,
         'A personal symbol still forming — stay with the feeling longer than the plot.',
-        'Hâlâ oluşan kişisel sembol — olay örgüsünden çok hisle kalın.',
+        'Hâlâ oluşan kişisel bir sembol — olay örgüsünden çok hisle kalın.',
       ),
     })
   }
   return out.slice(0, 6)
 }
 
-function buildPrompt(opts: {
-  excerpt: string
-  scene: string
-  creatures: Scored<(typeof CREATURES)[number]>[]
-  objects: Scored<(typeof OBJECTS)[number]>[]
-  actionEn?: string
-  palette: string
-  drama: number
-  words: string[]
-  variation: number
-  seed: number
-}) {
-  const { excerpt, scene, creatures, objects, actionEn, palette, drama, words, variation, seed } = opts
-  const creatureLine = creatures
+/* ── Image prompt engineering ────────────────────────────── */
+
+function buildImagePrompt(b: SceneBible): string {
+  const creatureLine = b.creatures
     .slice(0, 3)
     .map((c) => c.visual)
     .join('; ')
-  const objectLine = objects
+  const objectLine = b.objects
     .slice(0, 3)
     .map((o) => o.visual)
     .join('; ')
 
   const style =
-    drama >= 0.7
+    b.drama >= 0.7
       ? pick(
           [
             'cinematic fine art painting, epic yet elegant, realistic anatomy with painterly brushwork, museum quality',
             'dramatic romantic-realism oil painting, soft pastel emotion, gallery masterpiece',
             'high-end concept art still, filmic composition, artistic not cartoon',
           ] as const,
-          seed,
+          b.seed,
         )
       : pick(
           [
             'museum-quality fine art digital painting, soft oil brushwork, ethereal dreamcore',
             'poetic realism with sfumato edges, premium dream illustration',
           ] as const,
-          seed,
+          b.seed,
         )
 
   const lighting =
-    drama >= 0.7
-      ? 'cinematic volumetric light, strong key and soft pastel fill, god-rays, dust in air'
+    b.drama >= 0.7
+      ? 'cinematic volumetric light, strong key and soft pastel fill, god-rays, dust particles in air'
       : 'diffused pastel volumetric light, gentle bloom, soft shadows'
 
+  const actionEn = b.action?.en ?? 'a dreamer figure with clear emotional presence in the scene'
+
   return [
-    variation > 0 ? `Alternate masterful composition #${variation + 1} of the same dream.` : 'Single definitive masterpiece of this dream.',
-    `Ultra-detailed artwork of this dream (stay faithful): "${excerpt}".`,
-    `Action: ${actionEn ?? 'a dreamer figure with clear emotional presence in the scene'}.`,
-    `Environment: ${scene}.`,
-    creatureLine ? `Creatures: ${creatureLine}.` : '',
-    objectLine ? `Objects: ${objectLine}.` : '',
-    words.length ? `Language cues from dreamer: ${words.slice(0, 8).join(', ')}.` : '',
-    `Emotional pastel palette: ${palette}. No neon, no garish saturation.`,
+    b.variation > 0
+      ? `Alternate masterful composition #${b.variation + 1} of the same dream.`
+      : 'Single definitive masterpiece of this dream.',
+    `Ultra-detailed artwork of this dream (stay faithful to the narrative): "${b.excerpt}".`,
+    `Primary action/state: ${actionEn}.`,
+    `Environment: ${b.place.scene}.`,
+    creatureLine ? `Creatures (accurate, powerful, beautiful): ${creatureLine}.` : '',
+    objectLine ? `Symbolic objects: ${objectLine}.` : '',
+    b.phrases.length
+      ? `Ground details in the dreamer's language cues: ${b.phrases.slice(0, 8).join(', ')}.`
+      : '',
+    `Emotional pastel color palette (harmonious, not neon): ${b.palette}.`,
     `Lighting: ${lighting}.`,
-    `Style: ${style}.`,
-    drama >= 0.7
-      ? 'Composition: cinematic frame, dynamic diagonals, clear focal point, epic but tasteful. Tone: noble drama, not gore, not meme.'
-      : 'Composition: elegant focal point, breathing space, coherent depth. Tone: magical, serene, meaningful.',
+    `Artistic style: ${style}.`,
+    b.drama >= 0.7
+      ? 'Composition: cinematic frame, dynamic diagonal action, clear hero focal point, epic but tasteful. Tone: noble drama, not gore, not meme.'
+      : 'Composition: elegant focal point, breathing negative space, coherent depth. Tone: magical, serene, meaningful.',
     'Quality: highly detailed, coherent anatomy, beautiful, professional single image.',
     'Avoid: text, watermark, logo, UI, cartoon, anime chibi, extra limbs, excessive blood, low quality, random unrelated objects.',
   ]
@@ -443,16 +502,13 @@ function buildPrompt(opts: {
 
 /* ── Analysis sections ───────────────────────────────────── */
 
-function sectionEmotional(
-  lang: Lang,
-  excerpt: string,
-  emo: Scored<(typeof EMOTIONS)[number]> | undefined,
-  place: { en: string; tr: string },
-  creature: Scored<(typeof CREATURES)[number]> | undefined,
-  act: Scored<(typeof ACTIONS)[number]> | undefined,
-  drama: number,
-) {
-  const a = emo
+function sectionEmotional(lang: Lang, b: SceneBible): string {
+  const emo = b.emotions[0]
+  const sec = b.emotions[1]
+  const creature = b.creatures[0]
+  const act = b.action
+
+  const p1 = emo
     ? L(
         lang,
         `The emotional weather is dominated by ${emo.en}. That tone is the psyche’s headline — the feeling it most needs you to notice on waking.`,
@@ -464,8 +520,8 @@ function sectionEmotional(
         'Duygusal hava katmanlı ve açıktır: birkaç his sahneyi paylaşır, biri diğerlerini tamamen ele geçirmez.',
       )
 
-  const b =
-    drama >= 0.7
+  const p2 =
+    b.drama >= 0.7
       ? L(
           lang,
           `\n\nIntensity here is creative as well as confrontational. High-drama dreams expand a compressed knot of power, anger, dignity, or fear into a scene you can finally feel in full color.`,
@@ -477,7 +533,7 @@ function sectionEmotional(
           `\n\nAtmosfer patlayıcıdan çok gözeneklidir: imgeler nefes alır, ışık yavaş hareket eder, anlam hikâyeden önce hâl olarak gelir.`,
         )
 
-  const c = creature
+  const p3 = creature
     ? L(
         lang,
         `\n\nThe ${creature.en} amplifies everything — creatures give body and motion to forces waking language keeps abstract.`,
@@ -485,7 +541,7 @@ function sectionEmotional(
       )
     : ''
 
-  const d = act
+  const p4 = act
     ? L(
         lang,
         `\n\nYour stance — ${act.en} — is emotion in verb form. Notice whether the dream-body felt capable, trapped, furious, or strangely calm.`,
@@ -493,24 +549,29 @@ function sectionEmotional(
       )
     : ''
 
-  const e = L(
+  const p5 = L(
     lang,
-    `\n\nSet inside a ${place.en}, mood and place reinforce each other. In your words — “${excerpt.slice(0, 130)}${excerpt.length > 130 ? '…' : ''}” — atmosphere is the first truth offered.`,
-    `\n\nBir ${place.tr} içinde hâl ve mekân birbirini besler. “${excerpt.slice(0, 130)}${excerpt.length > 130 ? '…' : ''}” anlatınızda atmosfer sunulan ilk hakikattir.`,
+    `\n\nSet inside a ${b.place.en}, mood and place reinforce each other. In your words — “${b.excerpt.slice(0, 130)}${b.excerpt.length > 130 ? '…' : ''}” — atmosphere is the first truth offered.`,
+    `\n\nBir ${b.place.tr} içinde hâl ve mekân birbirini besler. “${b.excerpt.slice(0, 130)}${b.excerpt.length > 130 ? '…' : ''}” anlatınızda atmosfer sunulan ilk hakikattir.`,
   )
 
-  return a + b + c + d + e
+  const p6 = sec
+    ? L(
+        lang,
+        `\n\nUnder the dominant tone runs a secondary current of ${sec.en}. The dream is not a single emoji — it is a chord.`,
+        `\n\nBaskın tonun altında ${sec.tr} akıntısı dolaşır. Rüya tek emoji değil, bir akordur.`,
+      )
+    : ''
+
+  return p1 + p2 + p3 + p4 + p5 + p6
 }
 
-function sectionPsychology(
-  lang: Lang,
-  excerpt: string,
-  emo: Scored<(typeof EMOTIONS)[number]> | undefined,
-  creature: Scored<(typeof CREATURES)[number]> | undefined,
-  act: Scored<(typeof ACTIONS)[number]> | undefined,
-  place: { en: string; tr: string },
-  drama: number,
-) {
+function sectionPsychology(lang: Lang, b: SceneBible): string {
+  const emo = b.emotions[0]
+  const creature = b.creatures[0]
+  const act = b.action
+  const lionFight = creature?.id === 'lion' && act?.id === 'fight'
+
   const p1 = L(
     lang,
     'Psychologically, dreams are overnight integration more than prophecy: the mind stages images so unfinished feelings and intentions can be rehearsed safely. Your dream is private theatre with perfect casting.',
@@ -525,39 +586,38 @@ function sectionPsychology(
       )
     : ''
 
-  const p3 =
-    creature?.id === 'lion' && act?.id === 'fight'
+  const p3 = lionFight
+    ? L(
+        lang,
+        `\n\nFighting lions is a classic power-confrontation motif. It often clusters around: asserting boundaries against a dominant other; meeting your own aggression or ambition without shame; fear that strength will destroy or corrupt you; a courage test before a real trial. The dream asks less “will you win?” and more “can you stay present while power is in the room?”`,
+        `\n\nAslanlarla savaşmak klasik güç-yüzleşme motifidir. Çoğu zaman: baskın ötekine sınır, utançsız güç/hırs, gücün yok edeceği korkusu, gerçek bir imtihandan önce cesaret. Rüya “kazanacak mısın?”dan çok “güç odadayken hazır bulunabilir misin?” diye sorar.`,
+      )
+    : act?.id === 'fight'
       ? L(
           lang,
-          `\n\nFighting lions is a classic power-confrontation motif. It often clusters around: asserting boundaries against a dominant other; meeting your own aggression or ambition without shame; fear that strength will destroy or corrupt you; a courage test before a real trial. The dream asks less “will you win?” and more “can you stay present while power is in the room?”`,
-          `\n\nAslanlarla savaşmak klasik güç-yüzleşme motifidir. Çoğu zaman: baskın ötekine sınır, utançsız güç/hırs, gücün yok edeceği korkusu, gerçek bir imtihandan önce cesaret. Rüya “kazanacak mısın?”dan çok “güç odadayken hazır bulunabilir misin?” diye sorar.`,
+          `\n\nCombat means the ego is practicing engagement. Active struggle often signals that a part of you still believes agency is possible — a different picture from frozen helplessness.`,
+          `\n\nSavaş, egonun teması prova ettiğini gösterir. Aktif mücadele çoğu zaman seçim gücüne hâlâ inanıldığını işaret eder — donmuş çaresizlikten farklı bir tablo.`,
         )
-      : act?.id === 'fight'
-        ? L(
-            lang,
-            `\n\nCombat means the ego is practicing engagement. Active struggle often signals that a part of you still believes agency is possible — a different picture from frozen helplessness.`,
-            `\n\nSavaş, egonun teması prova ettiğini gösterir. Aktif mücadele çoğu zaman seçim gücüne hâlâ inanıldığını işaret eder — donmuş çaresizlikten farklı bir tablo.`,
-          )
-        : L(
-            lang,
-            `\n\nEven without battle, the dream organizes experience into a narrative you can revisit. Each retelling reassigns meaning and softens raw charge.`,
-            `\n\nSavaş olmasa bile rüya deneyimi yeniden ziyaret edilebilir bir anlatıya dizer. Her anlatım anlamı yeniden atar ve ham yükü yumuşatır.`,
-          )
+      : L(
+          lang,
+          `\n\nEven without battle, the dream organizes experience into a narrative you can revisit. Each retelling reassigns meaning and softens raw charge.`,
+          `\n\nSavaş olmasa bile rüya deneyimi yeniden ziyaret edilebilir bir anlatıya dizer. Her anlatım anlamı yeniden atar ve ham yükü yumuşatır.`,
+        )
 
   const p4 = L(
     lang,
-    `\n\nThe ${place.en} is stage design for inner architecture — environment is mood made spatial.`,
-    `\n\n${place.tr.charAt(0).toUpperCase()}${place.tr.slice(1)}, iç mimarinin sahne tasarımıdır — ortam mekânsallaşmış hâldir.`,
+    `\n\nThe ${b.place.en} is stage design for inner architecture — environment is mood made spatial.`,
+    `\n\n${b.place.tr.charAt(0).toUpperCase()}${b.place.tr.slice(1)}, iç mimarinin sahne tasarımıdır — ortam mekânsallaşmış hâldir.`,
   )
 
   const p5 = L(
     lang,
-    `\n\nTreat the dream as data about need and strategy, not a verdict on character. In “${excerpt.slice(0, 90)}${excerpt.length > 90 ? '…' : ''}”, intention is already half-visible.`,
-    `\n\nRüyayı karakter hükmü değil, ihtiyaç ve strateji verisi sayın. “${excerpt.slice(0, 90)}${excerpt.length > 90 ? '…' : ''}” içinde niyet yarı görünürdür.`,
+    `\n\nTreat the dream as data about need and strategy, not a verdict on character. In “${b.excerpt.slice(0, 90)}${b.excerpt.length > 90 ? '…' : ''}”, intention is already half-visible.`,
+    `\n\nRüyayı karakter hükmü değil, ihtiyaç ve strateji verisi sayın. “${b.excerpt.slice(0, 90)}${b.excerpt.length > 90 ? '…' : ''}” içinde niyet yarı görünürdür.`,
   )
 
   const p6 =
-    drama >= 0.7
+    b.drama >= 0.7
       ? L(
           lang,
           '\n\nHigh-arousal dreams leave residual charge. Ground after waking: water, longer exhales, name five colors in the room — so insight can land without jitter.',
@@ -568,14 +628,7 @@ function sectionPsychology(
   return p1 + p2 + p3 + p4 + p5 + p6
 }
 
-function sectionHidden(
-  lang: Lang,
-  emo: Scored<(typeof EMOTIONS)[number]> | undefined,
-  creature: Scored<(typeof CREATURES)[number]> | undefined,
-  objects: Scored<(typeof OBJECTS)[number]>[],
-  act: Scored<(typeof ACTIONS)[number]> | undefined,
-  drama: number,
-) {
+function sectionHidden(lang: Lang, b: SceneBible): string {
   const lines: string[] = [
     L(
       lang,
@@ -583,6 +636,10 @@ function sectionHidden(
       'Olay örgüsünün altında davetler çoğu zaman imgelerin içinde gizlidir:',
     ),
   ]
+
+  const emo = b.emotions[0]
+  const creature = b.creatures[0]
+  const act = b.action
 
   if (creature?.id === 'lion' || act?.id === 'fight') {
     lines.push(
@@ -607,7 +664,7 @@ function sectionHidden(
       ),
     )
   }
-  if (objects.some((o) => o.id === 'door' || o.id === 'key' || o.id === 'bridge')) {
+  if (b.objects.some((o) => o.id === 'door' || o.id === 'key' || o.id === 'bridge')) {
     lines.push(
       L(
         lang,
@@ -616,7 +673,7 @@ function sectionHidden(
       ),
     )
   }
-  if (objects.some((o) => o.id === 'water')) {
+  if (b.objects.some((o) => o.id === 'water')) {
     lines.push(
       L(
         lang,
@@ -625,7 +682,7 @@ function sectionHidden(
       ),
     )
   }
-  if (drama >= 0.7) {
+  if (b.drama >= 0.7) {
     lines.push(
       L(
         lang,
@@ -655,11 +712,11 @@ function sectionHidden(
 
 function sectionAdvice(
   lang: Lang,
-  emo: Scored<(typeof EMOTIONS)[number]> | undefined,
-  creature: Scored<(typeof CREATURES)[number]> | undefined,
-  act: Scored<(typeof ACTIONS)[number]> | undefined,
-  drama: number,
-) {
+  b: SceneBible,
+): { text: string; questions: string[] } {
+  const emo = b.emotions[0]
+  const creature = b.creatures[0]
+  const act = b.action
   const tips: string[] = [
     L(
       lang,
@@ -682,7 +739,7 @@ function sectionAdvice(
       ),
     )
   }
-  if (emo?.id === 'fear' || drama >= 0.7) {
+  if (emo?.id === 'fear' || b.drama >= 0.7) {
     tips.push(
       L(
         lang,
@@ -747,4 +804,66 @@ function sectionAdvice(
     text: tips.map((x, i) => `${i + 1}. ${x}`).join('\n\n'),
     questions,
   }
+}
+
+function sectionThemes(lang: Lang, b: SceneBible): string {
+  const themes: string[] = []
+  const emo = b.emotions[0]
+  const act = b.action
+  const creature = b.creatures[0]
+
+  if (creature?.id === 'lion' || act?.id === 'fight') {
+    themes.push(
+      L(lang, 'Initiation & the trial of power', 'İnisiasyon ve güç imtihanı'),
+      L(lang, 'Shadow strength / noble aggression', 'Gölge güç / soylu saldırganlık'),
+    )
+  }
+  if (emo?.id === 'freedom' || act?.id === 'fly') {
+    themes.push(L(lang, 'Liberation & wider perspective', 'Özgürleşme ve geniş bakış'))
+  }
+  if (b.objects.some((o) => o.id === 'door' || o.id === 'bridge' || o.id === 'key')) {
+    themes.push(L(lang, 'Thresholds & life transitions', 'Eşikler ve hayat geçişleri'))
+  }
+  if (b.objects.some((o) => o.id === 'water')) {
+    themes.push(L(lang, 'Emotional flow & cleansing', 'Duygusal akış ve arınma'))
+  }
+  if (emo?.id === 'love') {
+    themes.push(L(lang, 'Attachment, care, and longing', 'Bağlanma, özen ve özlem'))
+  }
+  if (emo?.id === 'fear' || b.drama >= 0.7) {
+    themes.push(L(lang, 'Courage under pressure', 'Baskı altında cesaret'))
+  }
+  if (b.place.id === 'forest') {
+    themes.push(L(lang, 'Descent into the living unknown', 'Canlı bilinmeze iniş'))
+  }
+  if (emo?.id === 'nostalgia') {
+    themes.push(L(lang, 'Memory & the inner child', 'Bellek ve iç çocuk'))
+  }
+  if (!themes.length) {
+    themes.push(
+      L(lang, 'Self-inquiry through night images', 'Gece imgeleriyle öz-sorgulama'),
+      L(lang, 'Feeling made visible', 'Görünür kılınmış his'),
+    )
+  }
+
+  const intro = L(
+    lang,
+    'This dream resonates with wider human motifs found in myth, art, and depth psychology:',
+    'Bu rüya mit, sanat ve derinlik psikolojisinde bulunan daha geniş insani motiflerle rezonans kurar:',
+  )
+  const body = themes.map((th) => `• ${th}`).join('\n')
+  const myth =
+    creature?.id === 'lion' && act?.id === 'fight'
+      ? L(
+          lang,
+          '\n\nMythic echo: lion combat recalls hero initiations where the beast is both obstacle and teacher. Your psyche borrows that ancient grammar for a modern pressure.',
+          '\n\nMitik yankı: aslan savaşı kahraman inisiasyonlarını hatırlatır; canavar hem engel hem öğretmendir. Psişeniz modern bir baskı için o eski grameri ödünç alır.',
+        )
+      : L(
+          lang,
+          '\n\nThese motifs endure because they mark universal passages of growth. Your dream personalizes them — that personalization is the gift.',
+          '\n\nBu motifler büyümeye dair evrensel geçitleri işaret ettiği için sürer. Rüyanız onları kişiselleştirir — hediye budur.',
+        )
+
+  return `${intro}\n${body}${myth}`
 }

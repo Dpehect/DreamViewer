@@ -1,5 +1,6 @@
+import { memo } from 'react'
 import { motion } from 'framer-motion'
-import type { DreamReport } from '../lib/analyze'
+import type { DreamReport } from '../types/dream'
 import type { UiCopy } from '../lib/i18n'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -18,10 +19,10 @@ function Block({
   return (
     <motion.section
       className="analysis-block"
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-32px' }}
-      transition={{ delay, duration: 0.55, ease: EASE }}
+      viewport={{ once: true, margin: '-36px' }}
+      transition={{ delay, duration: 0.45, ease: EASE }}
     >
       <h3 className="analysis-label">{label}</h3>
       <div className={lead ? 'analysis-body lead' : 'analysis-body'}>{children}</div>
@@ -29,13 +30,12 @@ function Block({
   )
 }
 
-export function AnalysisPanel({
-  report,
-  t,
-}: {
+type Props = {
   report: DreamReport
   t: UiCopy
-}) {
+}
+
+function AnalysisPanelInner({ report, t }: Props) {
   return (
     <div className="analysis-panel">
       <h2 className="serif analysis-title">{t.analysisTitle}</h2>
@@ -64,7 +64,7 @@ export function AnalysisPanel({
       </Block>
 
       <Block label={t.sections.advice} delay={0.2}>
-        <p className="advice-text">{report.advice}</p>
+        <p className="advice-text">{report.personalAdvice}</p>
         <p className="questions-heading">{t.questionsLabel}</p>
         <ul className="questions">
           {report.reflectionQuestions.map((q) => (
@@ -72,6 +72,12 @@ export function AnalysisPanel({
           ))}
         </ul>
       </Block>
+
+      <Block label={t.sections.themes} delay={0.24}>
+        {report.thematicConnections}
+      </Block>
     </div>
   )
 }
+
+export const AnalysisPanel = memo(AnalysisPanelInner)
