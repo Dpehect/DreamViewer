@@ -1,9 +1,12 @@
-﻿# DreamViewer AI
+# DreamViewer AI
+
+Developed and verified by [Softbridge Solutions](https://softbridge-solutions-main-web-app-iota.vercel.app).
 
 **Live Demo:** https://dream-viewer-five.vercel.app/  
 **Repository:** https://github.com/Dpehect/DreamViewer
 
-**DreamViewer AI** is a production-oriented single-page application that transforms free-form dream narratives into (1) a single high-quality generative image and (2) a multi-section, language-aware interpretive report. The codebase emphasizes typed domain boundaries, cancellable async orchestration, secret-safe third-party API access, graceful degradation, and a performance-conscious React UI.
+**DreamViewer AI** is a production-oriented single-page application built by [Softbridge Solutions](https://softbridge-solutions-main-web-app-iota.vercel.app) that transforms free-form dream narratives into (1) a single high-quality generative image and (2) a multi-section, language-aware interpretive report. The codebase emphasizes typed domain boundaries, cancellable async orchestration, secret-safe third-party API access, graceful degradation, and a performance-conscious React UI.
+
 
 ---
 
